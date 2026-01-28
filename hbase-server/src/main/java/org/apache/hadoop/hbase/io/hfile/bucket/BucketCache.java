@@ -1661,10 +1661,30 @@ public class BucketCache implements BlockCache, HeapSize {
 
     LOG.info("Number of chunks: {}, chunk size: {}", numChunks, batchSize);
 
+    // HBASE-29857: Handle empty cache case where numChunks == 0
+    // When the cache was empty at persistence time, no BucketCacheEntry was written,
+    // so we should not try to read any chunks.
+    if (numChunks == 0) {
+      LOG.info("Cache was empty when persisted (numChunks=0), starting with empty cache");
+      bucketAllocator = new BucketAllocator(cacheCapacity, bucketSizes, backingMap, realCacheSize);
+      blockNumber.add(backingMap.size());
+      backingMapValidated.set(true);
+      return;
+    }
+
     ArrayList<BucketCacheProtos.BackingMap> bucketCacheMaps = new ArrayList<>();
     // Read the first chunk that has all the details.
     BucketCacheProtos.BucketCacheEntry firstChunk =
       BucketCacheProtos.BucketCacheEntry.parseDelimitedFrom(in);
+
+    // HBASE-29857: Additional null check for safety in case of corrupted file
+    if (firstChunk == null) {
+      LOG.warn("Failed to read first chunk from persistence file, starting with empty cache");
+      bucketAllocator = new BucketAllocator(cacheCapacity, bucketSizes, backingMap, realCacheSize);
+      blockNumber.add(backingMap.size());
+      backingMapValidated.set(true);
+      return;
+    }
 
     // Subsequent chunks have the backingMap entries.
     for (int i = 1; i < numChunks; i++) {
